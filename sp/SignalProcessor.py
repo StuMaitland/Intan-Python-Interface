@@ -10,17 +10,27 @@ import numpy
 from SignalResponse import SignalResponse
 import os
 
+example_settings = {
+    'continuous_capture': False,
+    'sample_rate': '30000',
+    'num_data_streams': 2,
+    'num_channels': 64,
+    'cable_delay': {'PortA': 5},
+    'capture_duration': 100
+}
+
+
 class DESTester:
-    def __init__(self):
+    def __init__(self, settings=example_settings):
         self.xem = ok.okCFrontPanel()
-        #self.initializeDevice()
+        self.initializeDevice()
+        self.init_experiment(settings)
         return
 
     def initializeDevice(self):
         # Open the first device we find.
         if self.xem.NoError != self.xem.OpenBySerial(""):
             raise RuntimeError("A device could not be opened.  Is one connected, or in use by another process?")
-            return (False)
 
         # Get some general information about the device.
         self.devInfo = ok.okTDeviceInfo()
@@ -50,6 +60,17 @@ class DESTester:
         self.resetBuffer()
         return (True)
 
+
+
+    def init_experiment(self, settings):
+        for i in range(settings['num_data_streams'] + 1):
+            self.enableDataStream(i)
+            self.setDataSource(i, i)
+        self.setContinuousRunMode(settings['continuous_capture'])
+        self.setSampleFrequency(settings['sample_rate'])
+        self.setCableDelay(settings['cable_delay'])
+
+
     def setKey(self, key):
         for i in range(4):
             self.xem.SetWireInValue((0x0b - i), key[i], 0xffff)
@@ -63,16 +84,16 @@ class DESTester:
         self.xem.UpdateWireIns()
         self.xem.SetWireInValue(0x10, 0x00, 0x01)
         self.xem.UpdateWireIns()
-        self.LightPulse([255,0,255])
+        self.LightPulse([255, 0, 255])
 
     def resetBoard(self):
         """
         Resets the FPGA- clears all auxiliary command RAM banks, clears USB FIFO, resets sampling rate to 30Ks/S
         :return:
         """
-        self.xem.SetWireInValue(0x00,0x01,0x01)
+        self.xem.SetWireInValue(0x00, 0x01, 0x01)
         self.xem.UpdateWireIns()
-        self.xem.SetWireInValue(0x00,0x00,0x01)
+        self.xem.SetWireInValue(0x00, 0x00, 0x01)
         self.xem.UpdateWireIns()
 
     def encryptDecrypt(self, infile, outfile):
@@ -125,7 +146,7 @@ class DESTester:
         self.xem.UpdateWireIns()
         self.encryptDecrypt(infile, outfile)
 
-    def setLight(self,i):
+    def setLight(self, i):
         """
         Cascades red LEDs on OK machine
         :param i: 0:255 int/binary, represents the binary 8 LED state
@@ -134,15 +155,15 @@ class DESTester:
         self.xem.SetWireInValue(0x11, i)
         self.xem.UpdateWireIns()
 
-    def LightPulse(self,arr, interval=1):
-        if type(arr)==int:
+    def LightPulse(self, arr, interval=1):
+        if type(arr) == int:
             self.setLight(arr)
-            #time.sleep(0.1)
+            # time.sleep(0.1)
         else:
             for i in arr:
                 self.setLight(i)
-                i+=interval
-                #time.sleep(0.1)
+                i += interval
+                # time.sleep(0.1)
         self.setLight(0)
 
     def startRecording(self):
@@ -164,9 +185,9 @@ class DESTester:
 
     def numWordsInFifo(self):
         self.xem.UpdateWireOuts()
-        msb=self.xem.GetWireOutValue(0x21)
-        lsb=self.xem.GetWireOutValue(0x20)
-        return(msb<<16 + lsb)
+        msb = self.xem.GetWireOutValue(0x21)
+        lsb = self.xem.GetWireOutValue(0x20)
+        return (msb << 16 + lsb)
 
     def setMaxTimeStep(self, maxTimeStep):
         # Set the amount of time the board should listen for data over
@@ -180,10 +201,10 @@ class DESTester:
         self.xem.SetWireInValue(0x02, maxTimeStepMsb >> 16)
         self.xem.UpdateWireIns()
 
-    def collectDataFromPipeOut(self, length,numStreams):
+    def collectDataFromPipeOut(self, length, numStreams):
         # Starts the timer, waits until an amount of data is available on the USB buffer, then collects it
         self.setMaxTimeStep(length)
-        buffer = bytearray("\x00" * self.dataBlockSize(numStreams)*length)
+        buffer = bytearray("\x00" * self.dataBlockSize(numStreams) * length)
         self.setLight(255)
         self.startRecording()
         while self.isRunning():
@@ -195,22 +216,22 @@ class DESTester:
 
     def enableDataStream(self, streamIndex):
         # Enables or disables streams
-        self.xem.SetWireInValue(0x14,0x0001 <<streamIndex,0x0001 <<streamIndex)
+        self.xem.SetWireInValue(0x14, 0x0001 << streamIndex, 0x0001 << streamIndex)
         self.xem.UpdateWireIns()
 
-    def setDataSource(self,stream,boardDataSource):
-        #Links a data source (port A1,A2,B1,B2...D2) to one of 8 available USB data streams
-        #Data source is 0:A1,1:A2,2:B1,3:B2,...,7:D2
+    def setDataSource(self, stream, boardDataSource):
+        # Links a data source (port A1,A2,B1,B2...D2) to one of 8 available USB data streams
+        # Data source is 0:A1,1:A2,2:B1,3:B2,...,7:D2
 
-        #if the datastream is higher than 4 we select a different wire in for it
-        highFour=(stream*4)//16
-        bitshift=(stream*4)-(highFour*16)
-        wireIn=0x12+highFour
+        # if the datastream is higher than 4 we select a different wire in for it
+        highFour = (stream * 4) // 16
+        bitshift = (stream * 4) - (highFour * 16)
+        wireIn = 0x12 + highFour
 
-        self.xem.SetWireInValue(wireIn,boardDataSource<< bitshift,0x000f <<bitshift)
+        self.xem.SetWireInValue(wireIn, boardDataSource << bitshift, 0x000f << bitshift)
         self.xem.UpdateWireIns()
 
-    def dataBlockSize(self,numDataStreams):
+    def dataBlockSize(self, numDataStreams):
         """
         Calculates the expected size in bytes of a single sample of data
         Note this differs from the Intan example as it returns bytes rather than 16 bit words (because thats stupid)
@@ -218,17 +239,16 @@ class DESTester:
         :return: int
         """
         # 4 = magic number; 2 = time stamp; 36 = (32 amp channels + 3 aux commands + 1 filler word); 8 = ADCs; 2 = TTL in/out
-        return(2*(4 + 2 + numDataStreams * 36 + 8 + 2))
+        return (2 * (4 + 2 + numDataStreams * 36 + 8 + 2))
 
-
-    def bytesToVolts(self,bytes):
+    def bytesToVolts(self, bytes):
         """
         :param bytes: int/array of RHD2000 amplifier waveforms
         :return: int/array microvolts
         """
         return 0.195 * bytes
 
-    def setSampleFrequency(self, multiply, divide):
+    def setSampleFrequency(self, rate):
         """
         # Assuming a 100 MHz reference clock is provided to the FPGA, the programmable FPGA clock frequency
         # is given by:
@@ -283,11 +303,31 @@ class DESTester:
         # pulse DCM_prog_trigger high (e.g., using an okTriggerIn module).  If this module is reset, it
         # reverts to a per-channel sampling rate of 30.0 kS/s.
         """
-        self.xem.SetWireInValue(0x03,(256*multiply + divide))
-        self.xem.UpdateWireIns()
-        self.xem.ActivateTriggerIn(0x40,0)
+        sampleFrequencies = {
+            '1000': [7, 125],
+            '1250': [7, 100],
+            '1500': [21, 250],
+            '2000': [14, 125],
+            '2500': [25, 250],
+            '3000': [21, 125],
+            '3330': [14, 75],
+            '4000': [28, 125],
+            '5000': [7, 25],
+            '6250': [7, 20],
+            '8000': [112, 250],
+            '10000': [14, 25],
+            '12500': [7, 10],
+            '15000': [21, 25],
+            '20000': [28, 25],
+            '25000': [35, 25],
+            '30000': [42, 25]
+        }
 
-    def setCableDelay(self, port, delay):
+        self.xem.SetWireInValue(0x03, (256 * sampleFrequencies[rate][0] + sampleFrequencies[rate][1]))
+        self.xem.UpdateWireIns()
+        self.xem.ActivateTriggerIn(0x40, 0)
+
+    def setCableDelay(self, delaydict):
         """
         Sets the delay for sampling the MISO line on SPI ports in integer clock steps (1/2800 of a per-channel
         sampling period.
@@ -296,19 +336,23 @@ class DESTester:
         :param delay: cable delay in integer clock steps (0:15)
         :return:
         """
-        #Delay must be between 0 and 15
-        delay=max(min(15, delay), 0)
-        shift={
-            "PortA":0,
-            "PortB":4,
-            "PortC":8,
-            "PortD":12
-        }
-        self.xem.SetWireInValue(0x04,delay << shift[port],0x000f << shift[port])
-        self.xem.UpdateWireIns()
+        for item in delaydict.items():
+            # Transforms to tuple- get ports from this
+            port = item[0]
+            delay = item[1]
+            # Delay must be between 0 and 15
+            delay = max(min(15, delay), 0)
+            shift = {
+                "PortA": 0,
+                "PortB": 4,
+                "PortC": 8,
+                "PortD": 12
+            }
+            self.xem.SetWireInValue(0x04, delay << shift[port], 0x000f << shift[port])
+            self.xem.UpdateWireIns()
 
-    def checkHeader(self,header):
-        #Confirms the first 64 bits of the USB header against the Rhythm magic number to verify sync
+    def checkHeader(self, header):
+        # Confirms the first 64 bits of the USB header against the Rhythm magic number to verify sync
 
         # OK, there's a lot going on on this line.
         # Unpack the byte array, coerced into a bytes object
@@ -316,7 +360,7 @@ class DESTester:
         # By default returns a signed tuple, so just get the first element.
         # Reference: https://docs.python.org/3/library/struct.html
         parsedHeader = numpy.frombuffer(bytes(header), numpy.dtype("<Q"))
-        return (parsedHeader==0xc691199927021942)
+        return (parsedHeader == 0xc691199927021942)
 
     def readDataBlock(self, buffer, samplesPerDataBlock, numDataStreams):
         """
@@ -327,16 +371,15 @@ class DESTester:
         :return:
         """
         # First we initialise some local variables
-        numChannels=32
+        numChannels = 32
         index = 0
         timeStamp = []
         auxiliaryData = numpy.zeros((100, 100, 100,))
-        totalUnsorted=[]
+        totalUnsorted = []
         amplifierData = numpy.zeros((numDataStreams, numChannels, samplesPerDataBlock))
         boardAdcData = numpy.zeros((100, 100))
         ttlIn = []
         ttlOut = []
-
 
         #   The data is arranged in the following format on the board:
         #       8 byte header
@@ -349,60 +392,60 @@ class DESTester:
 
 
         for sample in xrange(0, samplesPerDataBlock):
-            #print("Sample: {}. Index: {}".format(sample,index))
+            # print("Sample: {}. Index: {}".format(sample,index))
 
             # Check the first 8 bytes to match the RHD2000 magic header word
-            if not self.checkHeader(buffer[index:index+8]):
+            if not self.checkHeader(buffer[index:index + 8]):
                 print("")
-                raise SyntaxError("Error in readDataBlock: Incorrect header: {0}".format(buffer[index:index+8]))
+                raise SyntaxError("Error in readDataBlock: Incorrect header: {0}".format(buffer[index:index + 8]))
             index += 8
-
 
             # Read the timestamp
             # This time it's L- unsigned long
-            #timeStamp.append(unpack("<L", buffer[index:index + 4])[0])
+            # timeStamp.append(unpack("<L", buffer[index:index + 4])[0])
             index += 4
 
             # Read auxiliary input
-            #for channel in xrange(0, 3):
-                #for stream in xrange(0, numDataStreams):
-                    # The rest are H, unsigned short
-                    #auxiliaryData[stream][channel][sample] = unpack("<H", buffer[index:index + 2])[0]
-                    #index += 2
-                    # Each sample is represented by two bytes
+            # for channel in xrange(0, 3):
+            # for stream in xrange(0, numDataStreams):
+            # The rest are H, unsigned short
+            # auxiliaryData[stream][channel][sample] = unpack("<H", buffer[index:index + 2])[0]
+            # index += 2
+            # Each sample is represented by two bytes
             index += 6 * numDataStreams
 
-            #unsorted = []
-            #for i in range(0,self.dataBlockSize(numDataStreams)):
+            # unsorted = []
+            # for i in range(0,self.dataBlockSize(numDataStreams)):
             #    try:
             #        unsorted.append(unpack("<H",buffer[index+i:index+i+2])[0])
             #    except:
-                    #print("")
-            #totalUnsorted.append(unsorted)
+            # print("")
+            # totalUnsorted.append(unsorted)
 
             # Read amplifier channels- this is the one we really want
-            numpifiedData= numpy.frombuffer(buffer[index:index+(2 * numChannels*numDataStreams)],numpy.dtype("<H"))
-            numpifiedData=numpy.reshape(numpifiedData,(-1,2)).T
+            numpifiedData = numpy.frombuffer(buffer[index:index + (2 * numChannels * numDataStreams)],
+                                             numpy.dtype("<H"))
+            numpifiedData = numpy.reshape(numpifiedData, (-1, 2)).T
             for channel in xrange(0, numChannels):
                 for stream in xrange(0, numDataStreams):
                     amplifierData[stream][channel][sample] = numpifiedData[stream][channel]
-                    #amplifierData[stream][channel][sample] = unpack("<H", buffer[index:index + 2])[0]
-            index += 2*numChannels*numDataStreams
+                    # amplifierData[stream][channel][sample] = unpack("<H", buffer[index:index + 2])[0]
+            index += 2 * numChannels * numDataStreams
             # Skip 36th filler word in each data stream
 
             index += 2 * numDataStreams
 
             # Read from AD5662 ADCs
-            #for i in xrange(0, 8):
-                #boardAdcData[i][sample] = unpack("<H", buffer[index:index + 2])[0]
-                #index += 2
-            index+=2*8
+            # for i in xrange(0, 8):
+            # boardAdcData[i][sample] = unpack("<H", buffer[index:index + 2])[0]
+            # index += 2
+            index += 2 * 8
 
             # Read TTL input and output values
-            #ttlIn.append(unpack("<H", buffer[index:index + 2])[0])
+            # ttlIn.append(unpack("<H", buffer[index:index + 2])[0])
             index += 2
-            #ttlOut.append(unpack("<H", buffer[index:index + 2])[0])
+            # ttlOut.append(unpack("<H", buffer[index:index + 2])[0])
             index += 2
 
-            #Construct signal response object
-        return(SignalResponse(timeStamp,auxiliaryData,amplifierData,boardAdcData,ttlIn,ttlOut,totalUnsorted))
+            # Construct signal response object
+        return (SignalResponse(timeStamp, auxiliaryData, amplifierData, boardAdcData, ttlIn, ttlOut, totalUnsorted))
