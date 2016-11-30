@@ -25,7 +25,8 @@ class DESTester:
         self.xem = ok.okCFrontPanel()
         self.initializeDevice()
         self.init_experiment(settings)
-        return
+        self.num_channels = settings['num_channels']
+        self.capture_duration = settings['capture_duration']
 
     def initializeDevice(self):
         # Open the first device we find.
@@ -46,21 +47,19 @@ class DESTester:
         self.xem.LoadDefaultPLLConfiguration()
 
         # Download the configuration file.
-        if (self.xem.NoError != self.xem.ConfigureFPGA("main.bit")):
+        if self.xem.NoError != self.xem.ConfigureFPGA("main.bit"):
             print("FPGA configuration failed.")
-            return (False)
+            return False
 
         # Check for FrontPanel support in the FPGA configuration.
-        if (False == self.xem.IsFrontPanelEnabled()):
+        if not self.xem.IsFrontPanelEnabled():
             print("FrontPanel support is not available.")
-            return (False)
+            return False
 
         print("FrontPanel support is available.")
 
         self.resetBuffer()
-        return (True)
-
-
+        return True
 
     def init_experiment(self, settings):
         for i in range(settings['num_data_streams'] + 1):
@@ -69,7 +68,6 @@ class DESTester:
         self.setContinuousRunMode(settings['continuous_capture'])
         self.setSampleFrequency(settings['sample_rate'])
         self.setCableDelay(settings['cable_delay'])
-
 
     def setKey(self, key):
         for i in range(4):
@@ -97,14 +95,14 @@ class DESTester:
         self.xem.UpdateWireIns()
 
     def encryptDecrypt(self, infile, outfile):
-        fileIn = open(infile, "rb")
-        fileOut = open(outfile, "wb")
+        file_in = open(infile, "rb")
+        file_out = open(outfile, "wb")
 
         # Reset the RAM address pointer.
         self.xem.ActivateTriggerIn(0x41, 0)
 
-        while fileIn:
-            buf = bytearray(fileIn.read(2048))
+        while file_in:
+            buf = bytearray(file_in.read(2048))
 
             got = len(buf)
             if (got == 0):
@@ -123,14 +121,14 @@ class DESTester:
             # Wait for the TriggerOut indicating DONE.
             for i in range(100):
                 self.xem.UpdateTriggerOuts()
-                if (self.xem.IsTriggered(0x60, 1)):
+                if self.xem.IsTriggered(0x60, 1):
                     break
 
             self.xem.ReadFromPipeOut(0xa0, buf)
-            fileOut.write(buf)
+            file_out.write(buf)
 
-        fileIn.close()
-        fileOut.close()
+        file_in.close()
+        file_out.close()
 
     def encrypt(self, infile, outfile):
         print("Encrypting %s ----> %s" % (infile, outfile))
@@ -224,11 +222,11 @@ class DESTester:
         # Data source is 0:A1,1:A2,2:B1,3:B2,...,7:D2
 
         # if the datastream is higher than 4 we select a different wire in for it
-        highFour = (stream * 4) // 16
-        bitshift = (stream * 4) - (highFour * 16)
-        wireIn = 0x12 + highFour
+        high_four = (stream * 4) // 16
+        bitshift = (stream * 4) - (high_four * 16)
+        wire_in = 0x12 + high_four
 
-        self.xem.SetWireInValue(wireIn, boardDataSource << bitshift, 0x000f << bitshift)
+        self.xem.SetWireInValue(wire_in, boardDataSource << bitshift, 0x000f << bitshift)
         self.xem.UpdateWireIns()
 
     def dataBlockSize(self, numDataStreams):
@@ -241,7 +239,8 @@ class DESTester:
         # 4 = magic number; 2 = time stamp; 36 = (32 amp channels + 3 aux commands + 1 filler word); 8 = ADCs; 2 = TTL in/out
         return (2 * (4 + 2 + numDataStreams * 36 + 8 + 2))
 
-    def bytesToVolts(self, bytes):
+    @staticmethod
+    def bytesToVolts(bytes):
         """
         :param bytes: int/array of RHD2000 amplifier waveforms
         :return: int/array microvolts
@@ -332,8 +331,7 @@ class DESTester:
         Sets the delay for sampling the MISO line on SPI ports in integer clock steps (1/2800 of a per-channel
         sampling period.
         Note: Set cable delay after sample rate is changed
-        :param port: PortABCD of connected SPI port
-        :param delay: cable delay in integer clock steps (0:15)
+        :param delaydict: PortABCD of connected SPI port: cable delay in integer clock steps (0:15)
         :return:
         """
         for item in delaydict.items():
@@ -371,15 +369,15 @@ class DESTester:
         :return:
         """
         # First we initialise some local variables
-        numChannels = 32
+        num_channels = self.num_channels
         index = 0
-        timeStamp = []
-        auxiliaryData = numpy.zeros((100, 100, 100,))
-        totalUnsorted = []
-        amplifierData = numpy.zeros((numDataStreams, numChannels, samplesPerDataBlock))
-        boardAdcData = numpy.zeros((100, 100))
-        ttlIn = []
-        ttlOut = []
+        time_stamp = []
+        auxiliary_data = numpy.zeros((100, 100, 100,))
+        total_unsorted = []
+        amplifier_data = numpy.zeros((numDataStreams, num_channels, samplesPerDataBlock))
+        board_adc_data = numpy.zeros((100, 100))
+        ttl_in = []
+        ttl_out = []
 
         #   The data is arranged in the following format on the board:
         #       8 byte header
@@ -390,9 +388,7 @@ class DESTester:
         #       128 byte ADC5662 data
         #       4 byte ttlIn + ttOut data
 
-
         for sample in xrange(0, samplesPerDataBlock):
-            # print("Sample: {}. Index: {}".format(sample,index))
 
             # Check the first 8 bytes to match the RHD2000 magic header word
             if not self.checkHeader(buffer[index:index + 8]):
@@ -402,50 +398,40 @@ class DESTester:
 
             # Read the timestamp
             # This time it's L- unsigned long
-            # timeStamp.append(unpack("<L", buffer[index:index + 4])[0])
+            time_stamp.append(numpy.frombuffer(buffer[index:index + 2], numpy.dtype("<L")))
             index += 4
 
             # Read auxiliary input
-            # for channel in xrange(0, 3):
-            # for stream in xrange(0, numDataStreams):
-            # The rest are H, unsigned short
-            # auxiliaryData[stream][channel][sample] = unpack("<H", buffer[index:index + 2])[0]
-            # index += 2
-            # Each sample is represented by two bytes
-            index += 6 * numDataStreams
-
-            # unsorted = []
-            # for i in range(0,self.dataBlockSize(numDataStreams)):
-            #    try:
-            #        unsorted.append(unpack("<H",buffer[index+i:index+i+2])[0])
-            #    except:
-            # print("")
-            # totalUnsorted.append(unsorted)
+            for channel in xrange(0, 3):
+                for stream in xrange(0, numDataStreams):
+                    # The rest are H, unsigned short
+                    auxiliary_data[stream][channel][sample] = numpy.frombuffer(buffer[index:index + 2], numpy.dtype("<H"))
+                    index += 2
 
             # Read amplifier channels- this is the one we really want
-            numpifiedData = numpy.frombuffer(buffer[index:index + (2 * numChannels * numDataStreams)],
+            numpifiedData = numpy.frombuffer(buffer[index:index + (2 * num_channels * numDataStreams)],
                                              numpy.dtype("<H"))
             numpifiedData = numpy.reshape(numpifiedData, (-1, 2)).T
-            for channel in xrange(0, numChannels):
+            for channel in xrange(0, num_channels):
                 for stream in xrange(0, numDataStreams):
-                    amplifierData[stream][channel][sample] = numpifiedData[stream][channel]
+                    amplifier_data[stream][channel][sample] = numpifiedData[stream][channel]
                     # amplifierData[stream][channel][sample] = unpack("<H", buffer[index:index + 2])[0]
-            index += 2 * numChannels * numDataStreams
+            index += 2 * num_channels * numDataStreams
             # Skip 36th filler word in each data stream
 
             index += 2 * numDataStreams
 
             # Read from AD5662 ADCs
-            # for i in xrange(0, 8):
-            # boardAdcData[i][sample] = unpack("<H", buffer[index:index + 2])[0]
-            # index += 2
-            index += 2 * 8
+            for i in xrange(0, 8):
+                board_adc_data[i][sample] = numpy.frombuffer(buffer[index:index + 2], numpy.dtype("<H"))
+                index += 2
 
             # Read TTL input and output values
-            # ttlIn.append(unpack("<H", buffer[index:index + 2])[0])
+
+            ttl_in.append(numpy.frombuffer(buffer[index:index + 2], numpy.dtype("<H")))
             index += 2
-            # ttlOut.append(unpack("<H", buffer[index:index + 2])[0])
+            ttl_out.append(numpy.frombuffer(buffer[index:index + 2], numpy.dtype("<H")))
             index += 2
 
             # Construct signal response object
-        return (SignalResponse(timeStamp, auxiliaryData, amplifierData, boardAdcData, ttlIn, ttlOut, totalUnsorted))
+        return SignalResponse(time_stamp, auxiliary_data, amplifier_data, board_adc_data, ttl_in, ttl_out, total_unsorted)
